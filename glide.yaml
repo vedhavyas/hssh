@@ -1,0 +1,9 @@
+package: github.com/vedhavyas/hssh
+import:
+- package: github.com/gorilla/mux
+  version: ^1.6.1
+- package: github.com/mikkeloscar/sshconfig
+- package: github.com/mitchellh/go-homedir
+- package: golang.org/x/crypto
+  subpackages:
+  - ssh
