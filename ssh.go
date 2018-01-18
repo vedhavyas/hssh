@@ -6,53 +6,72 @@ import (
 	"io/ioutil"
 	"net"
 	"os/user"
+	"path/filepath"
 
 	"github.com/mikkeloscar/sshconfig"
 	"github.com/mitchellh/go-homedir"
 	"golang.org/x/crypto/ssh"
 )
 
+type SSHHostDetails struct {
+	Host         string
+	User         string
+	Port         int
+	IdentityFile string
+}
+
 // SSHClient holds the details of a client
 type SSHClient struct {
-	Config *ssh.ClientConfig
-	Host   string
-	Port   int
-	W      io.Writer
+	Config  *ssh.ClientConfig
+	Details *SSHHostDetails
+	W       io.Writer
 }
 
 // getHostDetails will return the private file for the given host
-// we will try to read from ~/.ssh/config
-func getHostDetails(host string) (sshHost *sshconfig.SSHHost, err error) {
+// we will try to read from ~/.ssh/config and /etc/ssh/ssh_config
+func getHostDetails(host string) (sshHost *SSHHostDetails, err error) {
 	u, err := user.Current()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %v", err)
 	}
 
-	cpath := u.HomeDir + "/.ssh/config"
-	hosts, err := sshconfig.ParseSSHConfig(cpath)
+	hdir, err := homedir.Dir()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read sshConfig: %v", err)
+		return nil, fmt.Errorf("failed to get home directory: %v", err)
 	}
 
-	h, bh := filterHost(hosts, host)
-	if h != nil {
-		return h, nil
+	paths := []string{filepath.Join(hdir, ".ssh", "config"), filepath.Join("/", "etc", "ssh", "ssh_config")}
+	for _, path := range paths {
+		hosts, err := sshconfig.ParseSSHConfig(path)
+		if err != nil {
+			continue
+		}
+
+		h := filterHost(hosts, host)
+		if h != nil {
+			return newSSHHostDetails(h.HostName, h.User, h.IdentityFile, h.Port)
+		}
 	}
 
-	if bh != nil {
-		return bh, nil
-	}
+	return newSSHHostDetails(host, u.Name, filepath.Join(u.HomeDir, ".ssh", "id_rsa"), 22)
+}
 
-	return &sshconfig.SSHHost{
-		HostName:     host,
-		User:         u.Name,
-		Port:         22,
-		IdentityFile: u.HomeDir + "/.ssh/id_rsa"}, nil
+func newSSHHostDetails(host, user, identityFile string, port int) (*SSHHostDetails, error) {
+	extPath, err := homedir.Expand(identityFile)
+	if err != nil {
+		return nil, err
+	}
+	return &SSHHostDetails{
+		Host:         host,
+		User:         user,
+		Port:         port,
+		IdentityFile: extPath}, nil
 }
 
 // filterHosts will return the host matching "host" from hosts and open host.
 // returns error if not found
-func filterHost(hosts []*sshconfig.SSHHost, host string) (mhost, ghost *sshconfig.SSHHost) {
+func filterHost(hosts []*sshconfig.SSHHost, host string) (h *sshconfig.SSHHost) {
+	var mhost, ghost *sshconfig.SSHHost
 	for _, h := range hosts {
 		if h.HostName == host {
 			mhost = h
@@ -64,17 +83,16 @@ func filterHost(hosts []*sshconfig.SSHHost, host string) (mhost, ghost *sshconfi
 		}
 	}
 
-	return mhost, ghost
+	if mhost != nil {
+		return mhost
+	}
+
+	return ghost
 }
 
 // getSSHConfig will return the Client ssh configuration
-func getSSHConfig(h *sshconfig.SSHHost) (*ssh.ClientConfig, error) {
-	expath, err := homedir.Expand(h.IdentityFile)
-	if err != nil {
-		return nil, err
-	}
-
-	buffer, err := ioutil.ReadFile(expath)
+func getSSHConfig(filePath, user string) (*ssh.ClientConfig, error) {
+	buffer, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read private key: %v", err)
 	}
@@ -85,7 +103,7 @@ func getSSHConfig(h *sshconfig.SSHHost) (*ssh.ClientConfig, error) {
 	}
 
 	return &ssh.ClientConfig{
-		User: h.User,
+		User: user,
 		Auth: []ssh.AuthMethod{ssh.PublicKeys(key)},
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			return nil
@@ -94,7 +112,7 @@ func getSSHConfig(h *sshconfig.SSHHost) (*ssh.ClientConfig, error) {
 }
 
 func createSession(c *SSHClient) (*ssh.Session, error) {
-	connection, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", c.Host, c.Port), c.Config)
+	connection, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", c.Details.Host, c.Details.Port), c.Config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial to remote: %v", err)
 	}
@@ -105,9 +123,9 @@ func createSession(c *SSHClient) (*ssh.Session, error) {
 	}
 
 	modes := ssh.TerminalModes{
-		ssh.ECHO:          0,     // disable echoing
-		ssh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
-		ssh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
+		ssh.ECHO:          0,
+		ssh.TTY_OP_ISPEED: 14400,
+		ssh.TTY_OP_OSPEED: 14400,
 	}
 
 	if err := session.RequestPty("xterm", 80, 40, modes); err != nil {
@@ -138,15 +156,14 @@ func NewSSHClient(host string, w io.Writer) (*SSHClient, error) {
 		return nil, fmt.Errorf("failed to fetch the host details: %v", err)
 	}
 
-	config, err := getSSHConfig(h)
+	config, err := getSSHConfig(h.IdentityFile, h.User)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %v", err)
 	}
 
 	return &SSHClient{
-		Config: config,
-		Host:   h.HostName,
-		Port:   h.Port,
-		W:      w,
+		Config:  config,
+		Details: h,
+		W:       w,
 	}, nil
 }
