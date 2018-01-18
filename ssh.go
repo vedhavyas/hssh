@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os/user"
 
 	"github.com/mikkeloscar/sshconfig"
+	"github.com/mitchellh/go-homedir"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -15,7 +17,7 @@ type SSHClient struct {
 	Config *ssh.ClientConfig
 	Host   string
 	Port   int
-	W      io.WriteCloser
+	W      io.Writer
 }
 
 // getHostDetails will return the private file for the given host
@@ -45,7 +47,7 @@ func getHostDetails(host string) (sshHost *sshconfig.SSHHost, err error) {
 		HostName:     host,
 		User:         u.Name,
 		Port:         22,
-		IdentityFile: u.HomeDir + "/.ssh/config/id_rsa"}, nil
+		IdentityFile: u.HomeDir + "/.ssh/id_rsa"}, nil
 }
 
 // filterHosts will return the host matching "host" from hosts and open host.
@@ -67,7 +69,12 @@ func filterHost(hosts []*sshconfig.SSHHost, host string) (mhost, ghost *sshconfi
 
 // getSSHConfig will return the Client ssh configuration
 func getSSHConfig(h *sshconfig.SSHHost) (*ssh.ClientConfig, error) {
-	buffer, err := ioutil.ReadFile(h.IdentityFile)
+	expath, err := homedir.Expand(h.IdentityFile)
+	if err != nil {
+		return nil, err
+	}
+
+	buffer, err := ioutil.ReadFile(expath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read private key: %v", err)
 	}
@@ -80,6 +87,9 @@ func getSSHConfig(h *sshconfig.SSHHost) (*ssh.ClientConfig, error) {
 	return &ssh.ClientConfig{
 		User: h.User,
 		Auth: []ssh.AuthMethod{ssh.PublicKeys(key)},
+		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			return nil
+		},
 	}, nil
 }
 
@@ -122,7 +132,7 @@ func (c *SSHClient) ExecuteCommand(cmd string) error {
 }
 
 // NewSSHClient returns a new SSHClient
-func NewSSHClient(host string, w io.WriteCloser) (*SSHClient, error) {
+func NewSSHClient(host string, w io.Writer) (*SSHClient, error) {
 	h, err := getHostDetails(host)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch the host details: %v", err)

@@ -2,7 +2,6 @@ package hssh
 
 import (
 	"encoding/json"
-	"io"
 	"io/ioutil"
 	"net/http"
 
@@ -12,27 +11,6 @@ import (
 func writeResponse(w http.ResponseWriter, code int, body []byte) {
 	w.WriteHeader(code)
 	w.Write(body)
-}
-
-// streamData reads 1024 bytes of data and flushes it to response writer
-// breaks on EOF or read error
-func streamData(w http.ResponseWriter, pr *io.PipeReader) {
-	buf := make([]byte, 1024)
-	for {
-		n, err := pr.Read(buf)
-		if err != nil {
-			pr.Close()
-			break
-		}
-
-		d := buf[0:n]
-		w.Write(d)
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-
-		buf = buf[0:0]
-	}
 }
 
 // sshHandler handles /ssh requests
@@ -55,16 +33,12 @@ func sshHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pr, pw := io.Pipe()
-	defer pw.Close()
-
-	client, err := NewSSHClient(req.Host, pw)
+	client, err := NewSSHClient(req.Host, w)
 	if err != nil {
 		writeResponse(w, http.StatusInternalServerError, []byte(err.Error()))
 		return
 	}
 
-	go streamData(w, pr)
 	err = client.ExecuteCommand(req.Command)
 	if err != nil {
 		writeResponse(w, http.StatusInternalServerError, []byte(err.Error()))
