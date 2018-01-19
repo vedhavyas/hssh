@@ -1,0 +1,23 @@
+Host test
+        HostName 52.12.34.92
+        Port 22
+        User vedhavyas
+        UseKeychain yes
+        AddKeysToAgent yes
+        IdentityFile ~/.ssh/id_rsa_test
+
+Host test2
+        HostName 10.10.10.100
+        Port 22
+        User vedhavyas
+        UseKeychain yes
+        AddKeysToAgent yes
+        IdentityFile ~/.ssh/id_rsa_test2
+
+Host *
+        HostName 10.10.10.10
+        Port 22
+        User vedhavyas
+        UseKeychain yes
+        AddKeysToAgent yes
+        IdentityFile ~/.ssh/id_rsa_test3

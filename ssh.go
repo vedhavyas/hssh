@@ -27,6 +27,21 @@ type SSHClient struct {
 	W       io.Writer
 }
 
+// readSSHConfig reads and returns host details if present
+func readSSHConfig(host, path string) (*SSHHostDetails, error) {
+	hosts, err := sshconfig.ParseSSHConfig(path)
+	if err != nil {
+		return nil, err
+	}
+
+	h := filterHost(hosts, host)
+	if h == nil {
+		return nil, fmt.Errorf("failed to find host in ssh config")
+	}
+
+	return newSSHHostDetails(h.HostName, h.User, h.IdentityFile, h.Port)
+}
+
 // getHostDetails will return the private file for the given host
 // we will try to read from ~/.ssh/config and /etc/ssh/ssh_config
 func getHostDetails(host string) (sshHost *SSHHostDetails, err error) {
@@ -42,20 +57,18 @@ func getHostDetails(host string) (sshHost *SSHHostDetails, err error) {
 
 	paths := []string{filepath.Join(hdir, ".ssh", "config"), filepath.Join("/", "etc", "ssh", "ssh_config")}
 	for _, path := range paths {
-		hosts, err := sshconfig.ParseSSHConfig(path)
+		h, err := readSSHConfig(host, path)
 		if err != nil {
 			continue
 		}
 
-		h := filterHost(hosts, host)
-		if h != nil {
-			return newSSHHostDetails(h.HostName, h.User, h.IdentityFile, h.Port)
-		}
+		return h, nil
 	}
 
 	return newSSHHostDetails(host, u.Name, filepath.Join(u.HomeDir, ".ssh", "id_rsa"), 22)
 }
 
+// newSSHHostDetails returns the new SSHHostDetails. Expands a relative identity file if required
 func newSSHHostDetails(host, user, identityFile string, port int) (*SSHHostDetails, error) {
 	extPath, err := homedir.Expand(identityFile)
 	if err != nil {
@@ -71,23 +84,13 @@ func newSSHHostDetails(host, user, identityFile string, port int) (*SSHHostDetai
 // filterHosts will return the host matching "host" from hosts and open host.
 // returns error if not found
 func filterHost(hosts []*sshconfig.SSHHost, host string) (h *sshconfig.SSHHost) {
-	var mhost, ghost *sshconfig.SSHHost
 	for _, h := range hosts {
 		if h.HostName == host {
-			mhost = h
-			continue
-		}
-
-		if h.HostName == "" {
-			ghost = h
+			return h
 		}
 	}
 
-	if mhost != nil {
-		return mhost
-	}
-
-	return ghost
+	return nil
 }
 
 // getSSHConfig will return the Client ssh configuration
